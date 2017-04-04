@@ -1,12 +1,10 @@
-{-# LANGUAGE TemplateHaskell #-}
-
 module Fasta where
 
 import Control.Applicative
 import Data.Function
 import Data.List (sortOn)
-import Data.Maybe (fromMaybe)
 import qualified Data.Map as Map
+import Data.Maybe (fromMaybe)
 
 k = 1
 
@@ -23,7 +21,8 @@ _GAP_START_PENALTY = -5
 _GAP_EXTENSION_PENALTY = -100
 
 gapDeltas :: [Int]
-gapDeltas = take _GAP_THRESHOLD [-_GAP_THRESHOLD ..] ++ take _GAP_THRESHOLD [1 ..]
+gapDeltas =
+    take _GAP_THRESHOLD [-_GAP_THRESHOLD ..] ++ take _GAP_THRESHOLD [1 ..]
 
 type IndexMap = Map.Map String [Int]
 
@@ -54,8 +53,7 @@ type RegionScores = Map.Map Int Region
 
 regionScore :: Region -> Int
 regionScore (SingleDiagonal di) = dScore di
-regionScore (DoubleDiagonal di1 di2) =
-    dScore di1 + dScore di2 + gapPenalty gaps
+regionScore (DoubleDiagonal di1 di2) = dScore di1 + dScore di2 + gapPenalty gaps
   where
     gaps = gapSize di1 di2
 
@@ -63,8 +61,7 @@ gapPenalty :: Int -> Int
 gapPenalty gaps = _GAP_START_PENALTY + _GAP_EXTENSION_PENALTY * (gaps - 1)
 
 gapSize :: DiagonalInfo -> DiagonalInfo -> Int
-gapSize di1 di2 =
-    abs $ dIndex di1 - dIndex di2
+gapSize di1 di2 = abs $ dIndex di1 - dIndex di2
 
 initIndexMap :: IndexMap
 initIndexMap = Map.empty
@@ -91,7 +88,6 @@ diagonalScores n =
     toDiagScore . concat . Map.elems
   where
     takeN n' = Map.fromList . take n' . sortOn (dScore . snd) . Map.toList
-
     toDiagScore :: [(Int, Int)] -> DiagonalScores
     toDiagScore =
         foldr
@@ -128,26 +124,22 @@ diagInfoSubstrings :: String -> String -> DiagonalInfo -> (String, String)
 diagInfoSubstrings s1 s2 diag_info =
     let drop_s1 = drop $ fst $ dStart diag_info
         drop_s2 = drop $ snd $ dStart diag_info
-        take_s1 =
-            take $ fst (dStop diag_info) - fst (dStart diag_info) + 1
-        take_s2 =
-            take $ snd (dStop diag_info) - snd (dStart diag_info) + 1
+        take_s1 = take $ fst (dStop diag_info) - fst (dStart diag_info) + 1
+        take_s2 = take $ snd (dStop diag_info) - snd (dStart diag_info) + 1
     in ((take_s1 . drop_s1) s1, (take_s2 . drop_s2) s2)
 
 rescoreDiagonals :: String -> String -> DiagonalScores -> DiagonalScores
 rescoreDiagonals s1 s2 =
-    Map.map
-        (\diag_index ->
-             let (s1', s2') = diagInfoSubstrings s1 s2 diag_index
-             in diag_index {dScore = scoreStrings s1' s2'})
+    Map.map $ \index ->
+        index {dScore = uncurry scoreStrings $ diagInfoSubstrings s1 s2 index}
 
 calculateRegions :: DiagonalScores -> RegionScores
-calculateRegions ds = Map.map (diagonalInfoToRegion ds) ds
+calculateRegions = Map.map =<< diagonalInfoToRegion
 
 diagonalInfoToRegion :: DiagonalScores -> DiagonalInfo -> Region
 diagonalInfoToRegion ds diag_info =
     let diag_indices = map (+ dIndex diag_info) gapDeltas
-        ds' = Map.filterWithKey (\key _ -> key `elem` diag_indices) ds
+        ds' = Map.filterWithKey (const . flip elem diag_indices) ds
     in Map.fold
            (\diag_info' region ->
                 max region $ DoubleDiagonal diag_info diag_info')
