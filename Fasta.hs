@@ -3,12 +3,10 @@
 module Fasta where
 
 import Control.Applicative
-import Control.Lens
-       ((^.), (.~), (%~), _1, _2, both, makeLenses, over)
+import Data.Function
 import Data.List (sort)
 import Data.Maybe (fromMaybe)
 import qualified Data.Map as Map
-import qualified Data.Traversable as Trav
 
 k = 1
 
@@ -32,19 +30,17 @@ type IndexMap = Map.Map String [Int]
 type Dotplot = Map.Map String [(Int, Int)]
 
 data DiagonalInfo = DiagonalInfo
-    { _dIndex :: Int
-    , _dScore :: Int
-    , _dStart :: (Int, Int)
-    , _dStop :: (Int, Int)
+    { dIndex :: Int
+    , dScore :: Int
+    , dStart :: (Int, Int)
+    , dStop :: (Int, Int)
     } deriving (Show)
 
-makeLenses ''DiagonalInfo
-
 instance Eq DiagonalInfo where
-    d1 == d2 = d1 ^. dScore == d2 ^. dScore
+    d1 == d2 = dScore d1 == dScore d2
 
 instance Ord DiagonalInfo where
-    d1 <= d2 = d1 ^. dScore <= d2 ^. dScore
+    d1 <= d2 = dScore d1 <= dScore d2
 
 type DiagonalScores = Map.Map Int DiagonalInfo
 
@@ -63,9 +59,9 @@ instance Ord Region where
 type RegionScores = Map.Map Int Region
 
 regionScore :: Region -> Int
-regionScore (SingleDiagonal di) = di ^. dScore
+regionScore (SingleDiagonal di) = dScore di
 regionScore (DoubleDiagonal di1 di2) =
-    di1 ^. dScore + di2 ^. dScore + gapPenalty gaps
+    dScore di1 + dScore di2 + gapPenalty gaps
   where
     gaps = gapSize di1 di2
 
@@ -74,18 +70,10 @@ gapPenalty gaps = _GAP_START_PENALTY + _GAP_EXTENSION_PENALTY * (gaps - 1)
 
 gapSize :: DiagonalInfo -> DiagonalInfo -> Int
 gapSize di1 di2 =
-    abs $ di1 ^. dIndex - di2 ^. dIndex
+    abs $ dIndex di1 - dIndex di2
 
 initIndexMap :: IndexMap
 initIndexMap = Map.empty
-
-adjustWithDefault
-    :: Ord k
-    => a -> (a -> a) -> k -> Map.Map k a -> Map.Map k a
-adjustWithDefault def f key m =
-    if key `Map.member` m
-        then Map.adjust f key m
-        else Map.insert key def m
 
 indexMap :: String -> IndexMap
 indexMap =
@@ -108,7 +96,7 @@ diagonalScores n dp = diagonalScores' dp
     diagonalScores' :: Dotplot -> DiagonalScores
     diagonalScores' =
         takeN 10 .
-        Map.filter ((>= _SCORE_THRESHOLD) . (^. dScore)) .
+        Map.filter ((>= _SCORE_THRESHOLD) . (dScore)) .
         toDiagScore . concat . Map.elems
 
     takeN :: (Ord k, Ord v) => Int -> Map.Map k v -> Map.Map k v
@@ -118,20 +106,23 @@ diagonalScores n dp = diagonalScores' dp
     toDiagScore =
         foldr
             (\pair@(s1, s2) m ->
-                 let adjustStart1 = (dStart . _1) %~ min s1
-                     adjustStart2 = (dStart . _2) %~ min s2
-                     adjustStart = adjustStart1 . adjustStart2
-                     adjustStop1 = (dStop . _1) %~ max (s1 + k - 1)
-                     adjustStop2 = (dStop . _2) %~ max (s2 + k - 1)
-                     adjustStop = adjustStop1 . adjustStop2
-                     adjustScore = dScore %~ (+ 1)
-                     diag_index = diagIndex n pair
-                 in adjustWithDefault
-                        (DiagonalInfo diag_index 1 pair (over both (+ (k - 1)) pair)) -- if insert
-                        (adjustScore . adjustStart . adjustStop) -- if adjust
-                        diag_index -- key
+                 let diag_index = diagIndex n pair
+                     combine d1 d2 =
+                         DiagonalInfo
+                             (dIndex d1) -- joining on identical indices, so use one of 'em
+                             (dScore d1 + dScore d2)
+                             ( (min `on` (fst . dStart)) d1 d2
+                             , (min `on` (snd . dStart)) d1 d2)
+                             ( (max `on` (fst . dStop)) d1 d2
+                             , (max `on` (snd . dStop)) d1 d2)
+                 in Map.insertWith
+                        combine
+                        diag_index
+                        (DiagonalInfo diag_index 1 pair (both (+ (k - 1)) pair))
                         m)
             Map.empty
+      where
+        both f (x, y) = (f x, f y)
 
 scoreStrings :: String -> String -> Int
 scoreStrings [] [] = 0
@@ -145,12 +136,12 @@ scoreStrings _ _ = error "scoreStrings expects strings of the same length"
 
 diagInfoSubstrings :: String -> String -> DiagonalInfo -> (String, String)
 diagInfoSubstrings s1 s2 diag_info =
-    let drop_s1 = drop $ diag_info ^. (dStart . _1)
-        drop_s2 = drop $ diag_info ^. (dStart . _2)
+    let drop_s1 = drop $ fst $ dStart diag_info
+        drop_s2 = drop $ snd $ dStart diag_info
         take_s1 =
-            take $ diag_info ^. (dStop . _1) - diag_info ^. (dStart . _1) + 1
+            take $ fst (dStop diag_info) - fst (dStart diag_info) + 1
         take_s2 =
-            take $ diag_info ^. (dStop . _2) - diag_info ^. (dStart . _2) + 1
+            take $ snd (dStop diag_info) - snd (dStart diag_info) + 1
     in ((take_s1 . drop_s1) s1, (take_s2 . drop_s2) s2)
 
 rescoreDiagonals :: String -> String -> DiagonalScores -> DiagonalScores
@@ -158,14 +149,14 @@ rescoreDiagonals s1 s2 =
     Map.map
         (\diag_index ->
              let (s1', s2') = diagInfoSubstrings s1 s2 diag_index
-             in dScore .~ scoreStrings s1' s2' $ diag_index)
+             in diag_index {dScore = scoreStrings s1' s2'})
 
 calculateRegions :: DiagonalScores -> RegionScores
 calculateRegions ds = Map.map (diagonalInfoToRegion ds) ds
 
 diagonalInfoToRegion :: DiagonalScores -> DiagonalInfo -> Region
 diagonalInfoToRegion ds diag_info =
-    let diag_indices = map (+ diag_info ^. dIndex) gapDeltas
+    let diag_indices = map (+ dIndex diag_info) gapDeltas
         ds' = Map.filterWithKey (\key _ -> key `elem` diag_indices) ds
     in Map.fold
            (\diag_info' region ->
