@@ -4,7 +4,7 @@ module Fasta where
 
 import Control.Applicative
 import Data.Function
-import Data.List (sort)
+import Data.List (sortOn)
 import Data.Maybe (fromMaybe)
 import qualified Data.Map as Map
 
@@ -35,12 +35,6 @@ data DiagonalInfo = DiagonalInfo
     , dStart :: (Int, Int)
     , dStop :: (Int, Int)
     } deriving (Show)
-
-instance Eq DiagonalInfo where
-    d1 == d2 = dScore d1 == dScore d2
-
-instance Ord DiagonalInfo where
-    d1 <= d2 = dScore d1 <= dScore d2
 
 type DiagonalScores = Map.Map Int DiagonalInfo
 
@@ -91,16 +85,12 @@ diagIndex :: Int -> (Int, Int) -> Int
 diagIndex n (i, j) = j - i + (n - 1)
 
 diagonalScores :: Int -> Dotplot -> DiagonalScores
-diagonalScores n dp = diagonalScores' dp
+diagonalScores n =
+    takeN 10 .
+    Map.filter ((>= _SCORE_THRESHOLD) . dScore) .
+    toDiagScore . concat . Map.elems
   where
-    diagonalScores' :: Dotplot -> DiagonalScores
-    diagonalScores' =
-        takeN 10 .
-        Map.filter ((>= _SCORE_THRESHOLD) . (dScore)) .
-        toDiagScore . concat . Map.elems
-
-    takeN :: (Ord k, Ord v) => Int -> Map.Map k v -> Map.Map k v
-    takeN n' = Map.fromList . take n' . sort . Map.toList
+    takeN n' = Map.fromList . take n' . sortOn (dScore . snd) . Map.toList
 
     toDiagScore :: [(Int, Int)] -> DiagonalScores
     toDiagScore =
@@ -111,10 +101,10 @@ diagonalScores n dp = diagonalScores' dp
                          DiagonalInfo
                              (dIndex d1) -- joining on identical indices, so use one of 'em
                              (dScore d1 + dScore d2)
-                             ( (min `on` (fst . dStart)) d1 d2
-                             , (min `on` (snd . dStart)) d1 d2)
-                             ( (max `on` (fst . dStop)) d1 d2
-                             , (max `on` (snd . dStop)) d1 d2)
+                             ( on min (fst . dStart) d1 d2
+                             , on min (snd . dStart) d1 d2)
+                             ( on max (fst . dStop) d1 d2
+                             , on max (snd . dStop) d1 d2)
                  in Map.insertWith
                         combine
                         diag_index
